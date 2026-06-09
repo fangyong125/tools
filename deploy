@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SCRIPT_DIR}"
+
+# 加载系统环境变量，获取 mvn 和 jdk
+set -a
+source /etc/environment
+set +a
+
+IMAGE_NAME="tools"
+CONTAINER_NAME="tools"
+IMAGE_TAG="latest"
+HOST_PORT="${HOST_PORT:-8880}"
+
+echo "==> Building application with Maven..."
+mvn package -DskipTests -B
+
+echo "==> Building Docker image ${IMAGE_NAME}:${IMAGE_TAG}..."
+docker build -t "${IMAGE_NAME}:${IMAGE_TAG}" .
+
+echo "==> Stopping and removing old container..."
+docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
+
+echo "==> Starting new container..."
+docker run -d \
+  --name "${CONTAINER_NAME}" \
+  --restart unless-stopped \
+  -p "${HOST_PORT}:8080" \
+  "${IMAGE_NAME}:${IMAGE_TAG}"
+
+echo "==> Cleaning up old images..."
+docker image prune -f
+
+CURRENT_IMAGE_ID="$(docker images -q "${IMAGE_NAME}:${IMAGE_TAG}")"
+if [[ -n "${CURRENT_IMAGE_ID}" ]]; then
+  docker images "${IMAGE_NAME}" --format "{{.ID}}" \
+    | grep -v "${CURRENT_IMAGE_ID}" \
+    | xargs -r docker rmi -f 2>/dev/null || true
+fi
+
+echo "==> Deploy complete!"
+echo "    URL: http://localhost:${HOST_PORT}/api/health"
+docker ps --filter "name=${CONTAINER_NAME}"
